@@ -212,16 +212,18 @@ function NotificationToast({ message, type, onClose }) {
 
 function AuthContainer({ onLogin, theme, toggleTheme }) {
   const [authView, setAuthView] = useState('signin'); 
-  const [admins, setAdmins] = useLocalStorage('tms_admins', initialAdmins);
+  const [admins, setAdmins] = useState(initialAdmins); // useLocalStorage hata kar useState lagaya
   const [rememberMeCreds, setRememberMeCreds] = useLocalStorage('tms_remember_me', null);
 
+  // Firebase Cloud se live sync karne ke liye yeh useEffect lagaya:
+  useEffect(() => {
+    const unsubAdmins = dbSync.subscribeToCollection('admins', initialAdmins, (data) => {
+      setAdmins(data);
+    });
+    return () => unsubAdmins();
+  }, []);
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 transition-colors duration-200 px-4 relative">
-      <div className="absolute top-4 right-4">
-        <button onClick={toggleTheme} className="p-2.5 rounded-full bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 transition-all hover:scale-105">
-          {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
-        </button>
-      </div>
 
       <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 border border-gray-100 dark:border-gray-700 transition-all">
         {authView === 'signin' && (
@@ -266,19 +268,33 @@ function SignInForm({ onLogin, setAuthView, admins, rememberMeCreds, setRemember
     }
   }, [rememberMeCreds]);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
-    const matchedAdmin = admins.find(admin => admin.email.toLowerCase() === email.toLowerCase() && admin.password === password);
-    if (matchedAdmin) {
-      if (rememberMe) {
-        setRememberMeCreds({ email, password });
+    
+    try {
+      // 1. Firebase se fresh admins ki list directly fetch karein
+      const querySnapshot = await getDocs(collection(db, 'admins'));
+      const freshAdminsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // 2. Ab check karein ke email aur password cloud data se match hota hai ya nahi
+      const matchedAdmin = freshAdminsList.find(admin => 
+        admin.email.toLowerCase() === email.toLowerCase() && admin.password === password
+      );
+      
+      if (matchedAdmin) {
+        if (rememberMe) {
+          setRememberMeCreds({ email, password });
+        } else {
+          setRememberMeCreds(null);
+        }
+        onLogin(matchedAdmin); // Login successful!
       } else {
-        setRememberMeCreds(null);
+        setError('Invalid email or password.');
       }
-      onLogin(matchedAdmin);
-    } else {
-      setError('Invalid email or password.');
+    } catch (err) {
+      console.error("Login error:", err);
+      setError('Connection error or database issue.');
     }
   };
 
@@ -366,17 +382,33 @@ function SignInForm({ onLogin, setAuthView, admins, rememberMeCreds, setRemember
   );
 }
 
-function SignUpForm({ setAuthView, admins, setAdmins }) {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-
-  const handleSignUp = (e) => {
+const handleSignUp = async (e) => {
     e.preventDefault();
     setError('');
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    const emailExists = admins.some(admin => admin.email.toLowerCase() === email.toLowerCase());
+    if (emailExists) {
+      setError('An account with this email already exists.');
+      return;
+    }
+
+    const newAdmin = { name, email: email.toLowerCase(), password };
+    try {
+      // Ab data local memory ke bajaye Firebase Cloud database mein save hoga
+      await dbSync.addItem('admins', newAdmin);
+      setSuccess(true);
+      setTimeout(() => {
+        setAuthView('signin');
+      }, 2000);
+    } catch (err) {
+      setError('Database error. Please try again.');
+    }
+  };
 
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
@@ -522,7 +554,7 @@ function ForgotPasswordForm({ setAuthView, admins, setAdmins }) {
     setStep(3);
   };
 
-  const handleResetPassword = (e) => {
+  const handleResetPassword = async (e) => {
     e.preventDefault();
     setError('');
 
@@ -531,18 +563,19 @@ function ForgotPasswordForm({ setAuthView, admins, setAdmins }) {
       return;
     }
 
-    const updatedAdmins = admins.map(admin => {
-      if (admin.email.toLowerCase() === email.toLowerCase()) {
-        return { ...admin, password: newPassword };
+    const matchedAdmin = admins.find(admin => admin.email.toLowerCase() === email.toLowerCase());
+    if (matchedAdmin) {
+      try {
+        // Ab password local memory ke bajaye Firebase Cloud database mein update hoga
+        await dbSync.updateItem('admins', matchedAdmin.id, { password: newPassword });
+        setInfoMessage('Password updated successfully! Redirecting...');
+        setTimeout(() => {
+          setAuthView('signin');
+        }, 2000);
+      } catch (err) {
+        setError('Failed to update password in cloud database.');
       }
-      return admin;
-    });
-
-    setAdmins(updatedAdmins);
-    setInfoMessage('Password updated successfully! Redirecting...');
-    setTimeout(() => {
-      setAuthView('signin');
-    }, 2000);
+    }
   };
 
   return (
