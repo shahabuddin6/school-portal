@@ -268,6 +268,7 @@ function SignInForm({ onLogin, setAuthView, admins, rememberMeCreds, setRemember
     }
   }, [rememberMeCreds]);
 
+  // --- NAYA CODE (ADDED): Firebase se direct verification ---
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
@@ -275,11 +276,17 @@ function SignInForm({ onLogin, setAuthView, admins, rememberMeCreds, setRemember
     try {
       // 1. Firebase se fresh admins ki list directly fetch karein
       const querySnapshot = await getDocs(collection(db, 'admins'));
+      
+      if (querySnapshot.empty) {
+        setError('Database mein koi admins nahi mile (Collection khali hai).');
+        return;
+      }
+
       const freshAdminsList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
       // 2. Ab check karein ke email aur password cloud data se match hota hai ya nahi
       const matchedAdmin = freshAdminsList.find(admin => 
-        admin.email.toLowerCase() === email.toLowerCase() && admin.password === password
+        admin.email?.toLowerCase() === email.trim().toLowerCase() && admin.password === password
       );
       
       if (matchedAdmin) {
@@ -290,14 +297,21 @@ function SignInForm({ onLogin, setAuthView, admins, rememberMeCreds, setRemember
         }
         onLogin(matchedAdmin); // Login successful!
       } else {
-        setError('Invalid email or password.');
+        // Agar match nahi hua toh exact check karein ke masla kahan hai
+        const emailExists = freshAdminsList.some(admin => admin.email?.toLowerCase() === email.trim().toLowerCase());
+        if (emailExists) {
+          setError('Password galat hai. Dobara check karein.');
+        } else {
+          setError('Yeh email database mein registered nahi hai.');
+        }
       }
     } catch (err) {
       console.error("Login error:", err);
-      setError('Connection error or database issue.');
+      setError(`Database Error: ${err.message || 'Connection issue'}`);
     }
   };
 
+  // --- AAPKA PREMIUM DESIGN INTERFACE ---
   return (
     <div className="space-y-6">
       <div className="text-center">
